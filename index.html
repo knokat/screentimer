@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Screentimer</title>
+<meta name="theme-color" content="#F7F5EF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Screentimer">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800&display=swap">
+<style>
+  :root {
+    --yellow: #F2C12E;
+    --bg: #F7F5EF; --surface: #FFFFFF; --ink: #141414; --muted: #6B675E;
+    --line: #E0DBCF; --bar: #D6D0C2; --face: #FFFFFF; --knob: #FFFFFF; --red: #C23A24;
+  }
+  .run {
+    --bg: #141414; --surface: #211F1C; --ink: #F7F5EF; --muted: #A8A399;
+    --line: #3A3833; --bar: #5A5650; --face: #211F1C; --knob: #F7F5EF; --red: #FF6A4D;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); }
+  body {
+    font-family: Archivo, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    color: var(--ink); -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app { min-height: 100vh; min-height: 100dvh; background: var(--bg); color: var(--ink); transition: background .3s, color .3s; }
+  button { font-family: inherit; color: inherit; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  input { font-family: inherit; font-size: 18px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .card { background: var(--surface); border-radius: 16px; }
+  .muted { color: var(--muted); }
+  .red { color: var(--red); }
+  .caps { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+
+  /* Eltern-Ansicht */
+  .phone { max-width: 480px; margin: 0 auto; min-height: 100vh; min-height: 100dvh;
+    padding: calc(16px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: clamp(14px, 2.6vh, 22px); }
+  .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 44px; gap: 12px; }
+  .pill { height: 34px; padding: 0 16px; border-radius: 17px; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+  .pill.on { background: var(--surface); }
+  .pill.off { border: 1px solid var(--line); color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--yellow); }
+  .iconbtn { width: 44px; height: 44px; padding: 0; border: none; border-radius: 22px; background: transparent; display: flex; align-items: center; justify-content: center; }
+  .center { display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .hint { padding: 12px 14px; display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .actions { display: flex; gap: 12px; align-items: center; margin-top: auto; }
+  .round { width: 64px; height: 64px; flex-shrink: 0; padding: 0; border-radius: 32px; border: 1.5px solid var(--line); background: transparent; display: flex; align-items: center; justify-content: center; }
+  .big { flex-grow: 1; height: 64px; border: none; border-radius: 32px; font-size: 20px; font-weight: 800; display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .big.start { background: var(--yellow); color: #141414; }
+  .big.stop { background: var(--ink); color: var(--bg); }
+  .toast { position: fixed; left: 50%; bottom: calc(100px + env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: 90vw;
+    background: var(--red); color: #fff; padding: 12px 18px; border-radius: 14px; font-weight: 600; font-size: 15px; z-index: 10; box-shadow: 0 6px 24px rgba(0,0,0,.2); }
+
+  /* Wochenkarte */
+  .week { padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .cells { display: flex; gap: 4px; align-items: center; }
+  .cell { flex: 1 1 0; height: 20px; border-radius: 6px; background: var(--yellow); overflow: hidden; display: flex; }
+  .cell > div { height: 100%; background: var(--bar); }
+  .over { height: 20px; padding: 0 7px; border-radius: 6px; background: var(--red); color: #fff; font-size: 12px; font-weight: 800; display: flex; align-items: center; }
+  .bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; align-items: end; margin-top: 8px; }
+  .bar { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .barbox { width: 100%; position: relative; display: flex; flex-direction: column; justify-content: flex-end; }
+  .barline { position: absolute; left: -3px; right: -3px; border-top: 1.5px dashed var(--muted); }
+  .legend { font-size: 11.5px; color: var(--muted); }
+
+  /* Kinder-Ansicht */
+  .kid { min-height: 100vh; min-height: 100dvh; padding: calc(32px + env(safe-area-inset-top)) 48px calc(40px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 24px; max-width: 1280px; margin: 0 auto; }
+  .kid .topbar { min-height: 48px; }
+  .kid .pill { height: 40px; padding: 0 20px; border-radius: 20px; font-size: 16px; }
+  .kid .dot { width: 10px; height: 10px; border-radius: 5px; }
+  .kidbody { flex-grow: 1; display: flex; align-items: center; gap: 64px; }
+  .kidleft { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .kidright { flex-grow: 1; display: flex; flex-direction: column; gap: 32px; min-width: 0; }
+  .kid .card { border-radius: 20px; }
+  .kid .week { padding: 20px 22px 16px; gap: 14px; }
+  .kid .cells { gap: 6px; }
+  .kid .cell { height: 28px; border-radius: 8px; }
+  .kid .over { height: 28px; padding: 0 12px; border-radius: 8px; font-size: 16px; }
+  .kid .bars { gap: 12px; margin-top: 10px; }
+  .kid .bar { gap: 6px; }
+  .kid .barline { left: -6px; right: -6px; border-top-width: 2px; }
+  .kid .legend { font-size: 15px; }
+  .kiddial { width: min(440px, 40vw, 58vh); height: auto; }
+  @media (max-width: 900px) {
+    .kiddial { width: min(440px, 80vw, 36vh); }
+    .kid { padding-left: 24px; padding-right: 24px; }
+    .kidbody { flex-direction: column; align-items: stretch; gap: 32px; }
+    .kidleft { align-self: center; }
+  }
+
+  /* Formulare & Listen */
+  .screen { max-width: 480px; margin: 0 auto; min-height: 100vh; min-height: 100dvh;
+    padding: calc(16px + env(safe-area-inset-top)) 20px calc(32px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 20px; }
+  .screen h1 { font-size: 22px; margin: 0; font-weight: 800; }
+  .head { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  .back { margin-left: -10px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 14px; font-weight: 600; }
+  .field input { height: 52px; padding: 0 14px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; }
+  .field input:focus { outline: 2px solid var(--yellow); outline-offset: 1px; }
+  .btn { height: 52px; padding: 0 20px; border-radius: 26px; border: none; font-size: 17px; font-weight: 700; }
+  .btn.primary { background: var(--yellow); color: #141414; }
+  .btn.ghost { background: transparent; border: 1.5px solid var(--line); }
+  .btn.danger { background: transparent; border: 1.5px solid var(--red); color: var(--red); }
+  .err { color: var(--red); font-weight: 600; font-size: 15px; }
+  .group h2 { font-size: 15px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+  .item { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border: none; background: var(--surface); border-radius: 14px; text-align: left; font-size: 16px; margin-bottom: 8px; }
+  .tag { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 8px; background: var(--bg); color: var(--muted); }
+  .note { font-size: 14px; color: var(--muted); line-height: 1.45; }
+  .pinbox { max-width: 360px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; padding: 24px; display: flex; flex-direction: column; justify-content: center; gap: 20px; }
+  .pinbox input { text-align: center; font-size: 32px; letter-spacing: .5em; font-weight: 800; }
+  .loading { min-height: 100vh; display: flex; align-items: center; justify-content: center; color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="app"><div class="loading">Screentimer lädt …</div></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
