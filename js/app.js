@@ -4,8 +4,12 @@ import { createSupabaseDb, createDemoDb } from './db.js';
 import { FORGOTTEN_AFTER_MIN } from './config.js';
 import {
   summarize, weekStart, fmtMin, fmtClock, fmtWatch, fmtTime, restRange, hourCells, wedgePath,
-  groupByDay, combine, toDateInput, DAY_NAMES, DAY_NAMES_LONG,
+  groupByDay, combine, toDateInput, addDays, DAY_NAMES, DAY_NAMES_LONG,
 } from './logic.js';
+
+const sumCuts = (list) => list.reduce((a, c) => a + c.minutes, 0);
+const reasonsOf = (list) => list.map((c) => c.reason).filter(Boolean).join(', ');
+const Swatch = ({ big }) => html`<span class=${'swatch' + (big ? ' lg' : '')} aria-hidden="true"></span>`;
 
 // ───────────── Gerät, Modus, PIN ─────────────
 const params = new URLSearchParams(location.search);
@@ -14,11 +18,13 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* privat */ } },
 };
-if (!DEMO) {
-  if (params.has('kind')) store.set('st_mode', 'kind');   // dieses Gerät = Leanders iPad
-  if (params.has('eltern')) store.set('st_mode', null);   // zurück zur Eltern-Ansicht
-}
-const IS_KID = params.has('kind') || (!DEMO && store.get('st_mode') === 'kind');
+// Leanders iPad hat eine eigene Adresse (…/kind/, setzt window.ST_KID). Ein Parameter wie ?kind
+// würde beim „Zum Home-Bildschirm“ auf iPhone/iPad verloren gehen – alte ?kind-Links leiten deshalb um.
+const IS_KID = !!window.ST_KID;
+const APP_ROOT = new URL(IS_KID ? '../' : './', location.href.split(/[?#]/)[0]).href;
+const KID_URL = APP_ROOT + 'kind/';
+const REDIRECT = !IS_KID && params.has('kind');
+if (REDIRECT) location.replace(KID_URL + (DEMO ? '?demo=' + encodeURIComponent(DEMO) : ''));
 const PIN_KEY = 'st_pin';
 
 // ───────────── Kleine Bausteine ─────────────
@@ -68,20 +74,27 @@ function dialCaption(s, kid) {
 
 function WeekCard({ s, kid }) {
   const H = kid ? 72 : 48;
-  const cells = hourCells(s.week, s.budgetMin);
+  const cells = hourCells(s.week, s.budgetMin, s.eff);
   const over = s.weekOver >= 1;
+  const cut = s.cutMin >= 1;
+  const nextCut = sumCuts(s.cutsNext);
+  const why = reasonsOf(s.cutsThis), whyNext = reasonsOf(s.cutsNext);
   return html`
     <section class="card week" aria-label="Diese Woche">
       <div class="row">
-        <span style=${`font-size:${kid ? 18 : 14}px;font-weight:700`}>${kid ? 'Deine Woche' : 'Diese Woche'}</span>
-        <span class=${over ? 'red' : 'muted'} style=${`font-size:${kid ? 17 : 13}px;font-weight:600`}>
-          ${over ? `${fmtMin(s.weekOver)} überzogen` : `${fmtMin(s.week)} von ${fmtMin(s.budgetMin)} ${kid ? 'geschaut' : 'verbraucht'}`}
+        <span style=${`font-size:${kid ? 18 : 14}px;font-weight:700;white-space:nowrap`}>${kid ? 'Deine Woche' : 'Diese Woche'}</span>
+        <span class=${'num ' + (over ? 'red' : 'muted')} style=${`font-size:${kid ? 17 : 13}px;font-weight:600;text-align:right`}>
+          ${over ? `${fmtMin(s.weekOver)} überzogen` : `${fmtMin(s.week)} von ${fmtMin(s.eff)}${kid ? ' geschaut' : ''}`}
         </span>
       </div>
       <div class="cells">
-        ${cells.map((u) => html`<div class="cell"><div style=${{ width: u + '%' }}></div></div>`)}
+        ${cells.map((c) => html`<div class="cell" style=${{ flexGrow: c.cap / 60 }}>
+          <div class="u" style=${{ width: c.used + '%' }}></div><div class="f" style=${{ width: c.free + '%' }}></div><div class="c" style=${{ width: c.cut + '%' }}></div>
+        </div>`)}
         ${over && html`<div class="over">+${Math.floor(s.weekOver)}</div>`}
       </div>
+      ${!kid && cut && html`<div class="cutline"><${Swatch}/><span><b>${fmtMin(s.cutMin)} gekürzt</b>${why ? ' · ' + why : ''}</span></div>`}
+      ${nextCut > 0 && html`<div class="cutline muted"><${Swatch}/><span>Nächste Woche ${fmtMin(nextCut)} weniger${whyNext ? ' · ' + whyNext : ''}</span></div>`}
       <div class="bars">
         ${s.days.map((m, i) => {
           const future = i > s.ti, today = i === s.ti;
@@ -103,8 +116,8 @@ function WeekCard({ s, kid }) {
         })}
       </div>
       <div class="legend">${kid
-        ? 'Jedes Kästchen ist eine Stunde, gelb ist noch da. Die Linie zeigt eine Stunde pro Tag.'
-        : 'Kästchen = 1 Stunde, gelb = noch übrig · Linie = 1 Stunde pro Tag'}</div>
+        ? 'Jedes Kästchen ist eine Stunde, gelb ist noch da' + (cut ? ', gestreift ist gekürzt' : '') + '. Die Linie zeigt eine Stunde pro Tag.'
+        : 'Kästchen = 1 Stunde, gelb = noch übrig' + (cut ? ', gestreift = gekürzt' : '') + ' · Linie = 1 Stunde pro Tag'}</div>
     </section>`;
 }
 
@@ -155,7 +168,7 @@ function ParentHome({ s, demo, busy, onStart, onStop, go }) {
       <${WeekCard} s=${s}/>
 
       <div class="actions">
-        <button class="round" aria-label="Einträge dieser Woche" onClick=${() => go({ name: 'entries' })}>${Icon.list}</button>
+        <button class="round" aria-label="Einträge und Kürzungen" onClick=${() => go({ name: 'entries' })}>${Icon.list}</button>
         ${run
           ? html`<button class="big stop" disabled=${busy} onClick=${onStop}>${Icon.stop}Stopp</button>`
           : html`<button class="big start" disabled=${busy} onClick=${onStart}>${Icon.play}Start</button>`}
@@ -164,6 +177,13 @@ function ParentHome({ s, demo, busy, onStart, onStop, go }) {
 }
 
 // ───────────── Leander: iPad ─────────────
+function KidCutLine({ s }) {
+  if (s.cutMin < 1) return null;
+  const why = reasonsOf(s.cutsThis);
+  return html`<div class="cutline kidcut"><${Swatch} big=${true}/>
+    <span><b>${fmtMin(s.cutMin)} gekürzt</b>${why ? html`<span class="muted"> · ${why}</span>` : ''}</span></div>`;
+}
+
 function KidHome({ s, demo }) {
   const run = !!s.running;
   const over = s.weekOver >= 1;
@@ -189,6 +209,7 @@ function KidHome({ s, demo }) {
               <div class=${over ? 'red' : ''} style="font-size:24px;font-weight:700">
                 ${over ? `Die Woche ist ${fmtMin(s.weekOver)} überzogen` : `Noch ${fmtMin(s.rem)} diese Woche`}
               </div>
+              <${KidCutLine} s=${s}/>
             </div>` : html`
             <div style="display:flex;flex-direction:column;gap:8px">
               <div class=${over ? 'red' : ''} style="font-size:20px;font-weight:700">${over ? 'Diese Woche überzogen' : 'Noch übrig diese Woche'}</div>
@@ -197,6 +218,7 @@ function KidHome({ s, demo }) {
                 ${over ? 'Die Stunden dieser Woche sind aufgebraucht. Ab Montag gibt es wieder neue.'
                   : s.daysLeft > 0 ? 'Gleich verteilt sind das ' + perDayText(s) : 'Heute ist der letzte Tag der Woche'}
               </div>
+              <${KidCutLine} s=${s}/>
             </div>`}
           ${run && s.daysLeft > 0 && s.rem >= 1 && html`
             <div class="card" style="padding:18px 22px;display:flex;flex-direction:column;gap:6px">
@@ -217,12 +239,35 @@ function Head({ title, onBack }) {
   </div>`;
 }
 
-function Entries({ sessions, s, now, go }) {
+function Entries({ sessions, s, now, go, act }) {
   const groups = groupByDay(sessions, now);
+  const cuts = [...s.cutsThis.map((c) => ({ ...c, next: false })), ...s.cutsNext.map((c) => ({ ...c, next: true }))];
+  const [err, setErr] = useState('');
+  const removeCut = async (c) => {
+    if (!confirm(`Kürzung um ${fmtMin(c.minutes)} wirklich zurücknehmen?`)) return;
+    const e = await act((db, pin) => db.deleteCut(pin, c.id));
+    setErr(e ? e.message : '');
+  };
   return html`
     <main class="screen">
       <${Head} title="Einträge dieser Woche" onBack=${() => go({ name: 'home' })}/>
-      <button class="btn primary" onClick=${() => go({ name: 'edit', entry: null })}>+ Nachtragen</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn primary" style="flex:1" onClick=${() => go({ name: 'edit', entry: null })}>+ Nachtragen</button>
+        <button class="btn ghost" style="flex:1" onClick=${() => go({ name: 'cut' })}>− Kürzen</button>
+      </div>
+      ${err && html`<div class="err" role="alert">${err}</div>`}
+      ${cuts.length > 0 && html`
+        <section class="group">
+          <h2><span>Kürzungen</span><span class="muted num">${s.cutMin >= 1 ? fmtMin(s.cutMin) + ' diese Woche' : ''}</span></h2>
+          ${cuts.map((c) => html`
+            <button class="item" aria-label=${`Kürzung ${fmtMin(c.minutes)} zurücknehmen`} onClick=${() => removeCut(c)}>
+              <span style="display:flex;gap:10px;align-items:center;min-width:0">
+                <${Swatch}/><b class="num">− ${fmtMin(c.minutes)}</b>
+                ${c.reason && html`<span class="muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.reason}</span>`}
+              </span>
+              ${c.next && html`<span class="tag">nächste Woche</span>`}
+            </button>`)}
+        </section>`}
       ${groups.length === 0 && html`<p class="note">Diese Woche gibt es noch keine Einträge.</p>`}
       ${groups.map((g) => html`
         <section class="group">
@@ -291,6 +336,54 @@ function EditEntry({ entry, now, act, go }) {
     </main>`;
 }
 
+// ───────────── Eltern: Budget kürzen ─────────────
+function CutForm({ now, act, go }) {
+  const monday = toDateInput(weekStart(now));
+  const sunday = new Date(weekStart(now)); sunday.setDate(sunday.getDate() + 6);
+  const [week, setWeek] = useState('this');
+  const [mins, setMins] = useState('30');
+  const [reason, setReason] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isSunday = now.getDay() === 0;
+
+  const save = async (ev) => {
+    ev.preventDefault();
+    const m = parseInt(mins, 10);
+    if (!(m >= 1 && m <= 10080)) { setErr('Bitte die Minuten als Zahl eingeben.'); return; }
+    setBusy(true); setErr('');
+    const e = await act((db, pin) => db.addCut(pin, week === 'next' ? addDays(monday, 7) : monday, m, reason.trim()));
+    setBusy(false);
+    if (e) setErr(e.message); else go({ name: 'entries' });
+  };
+
+  const chip = (m) => html`<button type="button" class=${'chip' + (mins === String(m) ? ' on' : '')} aria-pressed=${mins === String(m) ? 'true' : 'false'}
+    onClick=${() => setMins(String(m))}>${fmtMin(m)}</button>`;
+  const seg = (key, label) => html`<button type="button" class=${'chip' + (week === key ? ' on' : '')} style="flex:1" aria-pressed=${week === key ? 'true' : 'false'}
+    onClick=${() => setWeek(key)}>${label}</button>`;
+
+  return html`
+    <main class="screen">
+      <${Head} title="Budget kürzen" onBack=${() => go({ name: 'entries' })}/>
+      <form style="display:flex;flex-direction:column;gap:20px" onSubmit=${save}>
+        <div class="field"><span class="label">Für welche Woche?</span>
+          <div style="display:flex;gap:8px">${seg('this', 'Diese Woche')}${seg('next', 'Nächste Woche')}</div>
+          ${isSunday && week === 'this' && html`<p class="note" style="margin:0">Heute ist Sonntag – soll die Kürzung vielleicht erst nächste Woche gelten?</p>`}
+        </div>
+        <div class="field"><label for="f-mins">Wie viele Minuten?</label>
+          <div style="display:flex;gap:8px">${chip(15)}${chip(30)}${chip(60)}</div>
+          <input id="f-mins" inputmode="numeric" value=${mins} onInput=${(e) => setMins(e.target.value.replace(/\D/g, ''))}/>
+        </div>
+        <div class="field"><label for="f-reason">Grund (optional)</label>
+          <input id="f-reason" maxlength="80" placeholder="z. B. nach dem Stopp weitergespielt" value=${reason} onInput=${(e) => setReason(e.target.value)}/>
+        </div>
+        <p class="note" style="margin:0">Leander sieht die Kürzung und den Grund auf seinem iPad. Zurücknehmen geht jederzeit über die Einträge.</p>
+        ${err && html`<div class="err" role="alert">${err}</div>`}
+        <button class="btn primary" type="submit" disabled=${busy}>Kürzen</button>
+      </form>
+    </main>`;
+}
+
 // ───────────── Eltern: Einstellungen ─────────────
 function Settings({ settings, act, go, onForget }) {
   const [hours, setHours] = useState(String(settings.weekly_budget_min / 60).replace('.', ','));
@@ -298,7 +391,7 @@ function Settings({ settings, act, go, onForget }) {
   const [newPin, setNewPin] = useState('');
   const [msg, setMsg] = useState({ budget: '', pin: '' });
   const [copied, setCopied] = useState(false);
-  const kidLink = location.origin + location.pathname + '?kind';
+  const kidLink = KID_URL;
 
   const saveBudget = async (ev) => {
     ev.preventDefault();
@@ -351,7 +444,7 @@ function Settings({ settings, act, go, onForget }) {
       <section class="card" style="padding:16px;display:flex;flex-direction:column;gap:10px">
         <b>Link für Leanders iPad</b>
         <div class="note" style="word-break:break-all">${kidLink}</div>
-        <p class="note" style="margin:0">Auf dem iPad in Safari öffnen, dann Teilen → „Zum Home-Bildschirm“. Das iPad merkt sich danach die Kinder-Ansicht.</p>
+        <p class="note" style="margin:0">Auf dem iPad in Safari öffnen, dann Teilen → „Zum Home-Bildschirm“. Das Icon öffnet immer die Kinder-Ansicht.</p>
         <button class="btn ghost" onClick=${copy}>${copied ? 'Kopiert' : 'Link kopieren'}</button>
       </section>
 
@@ -385,7 +478,7 @@ function PinScreen({ db, onOk }) {
         ${err && html`<div class="err" role="alert" style="text-align:center">${err}</div>`}
         <button class="btn primary" type="submit" disabled=${busy}>Weiter</button>
       </form>
-      <a class="note" style="text-align:center" href="?kind">Das ist Leanders Gerät</a>
+      <a class="note" style="text-align:center" href=${KID_URL}>Das ist Leanders Gerät</a>
     </main>`;
 }
 
@@ -429,7 +522,14 @@ function App({ db }) {
   const wkRef = useRef(wk);
   useEffect(() => { if (wkRef.current !== wk) { wkRef.current = wk; load(); } }, [wk]);
 
-  const s = data ? summarize(data.sessions, now, data.settings.weekly_budget_min) : null;
+  let s = null;
+  if (data) {
+    const monday = toDateInput(weekStart(now));
+    const cuts = data.cuts || [];
+    const cutsThis = cuts.filter((c) => c.week_start === monday);
+    const cutsNext = cuts.filter((c) => c.week_start === addDays(monday, 7));
+    s = { ...summarize(data.sessions, now, data.settings.weekly_budget_min, sumCuts(cutsThis)), cutsThis, cutsNext };
+  }
   const run = !!(s && s.running);
 
   // Dunkel, solange der Timer läuft (nur auf der Startseite)
@@ -466,7 +566,8 @@ function App({ db }) {
 
   const go = (r) => { setRoute(r); window.scrollTo(0, 0); };
   let view;
-  if (route.name === 'entries') view = html`<${Entries} sessions=${data.sessions} s=${s} now=${now} go=${go}/>`;
+  if (route.name === 'entries') view = html`<${Entries} sessions=${data.sessions} s=${s} now=${now} go=${go} act=${act}/>`;
+  else if (route.name === 'cut') view = html`<${CutForm} now=${now} act=${act} go=${go}/>`;
   else if (route.name === 'edit') view = html`<${EditEntry} entry=${route.entry} now=${now} act=${act} go=${go}/>`;
   else if (route.name === 'settings') view = html`<${Settings} settings=${data.settings} act=${act} go=${go}
     onForget=${() => { store.set(PIN_KEY, null); setPin(null); go({ name: 'home' }); }}/>`;
@@ -478,6 +579,7 @@ function App({ db }) {
 
 // ───────────── Start ─────────────
 (async () => {
+  if (REDIRECT) return;
   const root = document.getElementById('app');
   try {
     const db = DEMO ? createDemoDb(DEMO) : await createSupabaseDb();
@@ -486,5 +588,5 @@ function App({ db }) {
     root.innerHTML = '<div class="loading">Die App konnte nicht starten. Bitte Internetverbindung prüfen und neu laden.</div>';
     console.error(e);
   }
-  if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && !DEMO) navigator.serviceWorker.register(APP_ROOT + 'sw.js', { scope: APP_ROOT }).catch(() => {});
 })();

@@ -1,0 +1,6 @@
+{
+  "name": "screentimer",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "TZ=Europe/Vienna node --test tests/" }
+}

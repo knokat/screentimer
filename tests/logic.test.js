@@ -1,7 +1,7 @@
 // Tests für js/logic.js – ausführen mit: TZ=Europe/Vienna node --test tests/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, weekStart, fmtMin, fmtWatch, fmtClock, restRange, hourCells, secondsPerDay, groupByDay } from '../js/logic.js';
+import { summarize, weekStart, fmtMin, fmtWatch, fmtClock, restRange, hourCells, secondsPerDay, groupByDay, addDays } from '../js/logic.js';
 
 const at = (s) => new Date(s); // lokale Zeit (TZ=Europe/Vienna)
 const sess = (a, b) => ({ started_at: at(a).toISOString(), ended_at: b ? at(b).toISOString() : null });
@@ -94,8 +94,42 @@ test('Formatierung', () => {
 });
 
 test('Stundenkästchen', () => {
-  assert.deepEqual(hourCells(220).map(Math.round), [100, 100, 100, 67, 0, 0, 0]);
-  assert.deepEqual(hourCells(500).map(Math.round), [100, 100, 100, 100, 100, 100, 100]);
+  assert.deepEqual(hourCells(220).map((c) => Math.round(c.used)), [100, 100, 100, 67, 0, 0, 0]);
+  assert.deepEqual(hourCells(500).map((c) => Math.round(c.used)), [100, 100, 100, 100, 100, 100, 100]);
+  assert.equal(hourCells(0, 450).length, 8);
+  assert.equal(hourCells(0, 450).at(-1).cap, 30);
+});
+
+test('Stundenkästchen mit 90 min Kürzung', () => {
+  const c = hourCells(220, 420, 330);
+  assert.deepEqual(c.map((x) => Math.round(x.used)), [100, 100, 100, 67, 0, 0, 0]);
+  assert.deepEqual(c.map((x) => Math.round(x.cut)), [0, 0, 0, 0, 0, 50, 100]);
+  assert.deepEqual(c.map((x) => Math.round(x.free)), [0, 0, 0, 33, 100, 50, 0]);
+  // überzogen: verbraucht reicht nur bis zum wirksamen Budget, Rest wird als „+…“ extra gezeigt
+  const o = hourCells(400, 420, 360);
+  assert.deepEqual(o.map((x) => Math.round(x.used)), [100, 100, 100, 100, 100, 100, 0]);
+  assert.equal(Math.round(o[6].cut), 100);
+});
+
+test('Kürzung senkt Wochenrest, Gleichverteilung und Tagesrahmen', () => {
+  // Mi, bis Di 175 min, heute 45 min, 30 min gekürzt
+  const s = [sess('2026-09-28T15:00', '2026-09-28T16:35'), sess('2026-09-29T15:00', '2026-09-29T16:20'), sess('2026-09-30T15:00', '2026-09-30T15:45')];
+  const r = summarize(s, at('2026-09-30T17:30'), 420, 30);
+  assert.equal(r.eff, 390);
+  assert.equal(r.cutMin, 30);
+  assert.equal(r.rem, 170);
+  assert.equal(r.perDay, 42);
+  // Kürzung größer als Budget → wirksames Budget 0, Uhr sofort rot
+  const z = summarize(s, at('2026-09-30T17:30'), 420, 600);
+  assert.equal(z.eff, 0);
+  assert.equal(z.cutMin, 420);
+  assert.equal(z.frame, 0);
+  assert.equal(Math.round(z.red), 45);
+});
+
+test('Datum plus Tage', () => {
+  assert.equal(addDays('2026-09-28', 7), '2026-10-05');
+  assert.equal(addDays('2026-10-26', -7), '2026-10-19');
 });
 
 test('Eintragsliste nach Tagen gruppiert, neuester Tag zuerst', () => {

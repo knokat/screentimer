@@ -1,5 +1,6 @@
 -- Screentimer – Datenbank-Setup für Supabase
--- Einmal komplett im Supabase SQL Editor ausführen.
+-- Komplett im Supabase SQL Editor ausführen. Gefahrlos wiederholbar: Wer es schon einmal
+-- ausgeführt hat, führt es nach Updates einfach nochmal aus – Daten und PIN bleiben erhalten.
 -- VORHER: unten bei "st_init_pin('1234')" eure eigene 4-stellige PIN eintragen.
 --
 -- Alle Tabellen tragen das Präfix st_, damit sie sauber neben anderen App-Tabellen
@@ -36,6 +37,16 @@ create table if not exists st_settings (
 );
 insert into st_settings (id) values (1) on conflict (id) do nothing;
 
+-- Kürzungen des Wochenbudgets (für die laufende oder die nächste Woche)
+create table if not exists st_cuts (
+  id          uuid primary key default gen_random_uuid(),
+  week_start  date not null check (extract(isodow from week_start) = 1),  -- Montag der Woche
+  minutes     int  not null check (minutes between 1 and 10080),
+  reason      text check (char_length(reason) <= 80),                     -- Leander sieht den Grund
+  created_at  timestamptz not null default now()
+);
+create index if not exists st_cuts_week on st_cuts (week_start);
+
 -- PIN liegt in einer eigenen Tabelle, die niemand direkt lesen darf.
 create table if not exists st_secret (
   id        int primary key default 1 check (id = 1),
@@ -49,6 +60,10 @@ create table if not exists st_secret (
 alter table st_sessions enable row level security;
 alter table st_settings enable row level security;
 alter table st_secret   enable row level security;
+alter table st_cuts     enable row level security;
+
+drop policy if exists st_cuts_read on st_cuts;
+create policy st_cuts_read on st_cuts for select using (true);
 
 drop policy if exists st_sessions_read on st_sessions;
 create policy st_sessions_read on st_sessions for select using (true);
@@ -183,11 +198,38 @@ begin
   return r;
 end $$;
 
+-- Budget kürzen: nur für die laufende oder die nächste Woche (Montag als Datum)
+create or replace function st_add_cut(p_pin text, p_week_start date, p_minutes int, p_reason text)
+returns st_cuts
+language plpgsql security definer set search_path = public, extensions as $$
+declare r st_cuts; tz text; cur date;
+begin
+  perform st_require_pin(p_pin);
+  select timezone into tz from st_settings where id = 1;
+  cur := date_trunc('week', now() at time zone coalesce(tz, 'Europe/Vienna'))::date;
+  if p_week_start is distinct from cur and p_week_start is distinct from cur + 7 then
+    raise exception 'Kürzen geht nur für diese oder nächste Woche';
+  end if;
+  if p_minutes is null or p_minutes < 1 then raise exception 'Bitte mindestens 1 Minute angeben'; end if;
+  insert into st_cuts (week_start, minutes, reason)
+  values (p_week_start, p_minutes, nullif(left(trim(coalesce(p_reason, '')), 80), ''))
+  returning * into r;
+  return r;
+end $$;
+
+create or replace function st_delete_cut(p_pin text, p_id uuid) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform st_require_pin(p_pin);
+  delete from st_cuts where id = p_id;
+end $$;
+
 -- Nur die Funktionen sind von außen aufrufbar, die Helfer nicht.
 revoke all on function st_pin_ok(text), st_require_pin(text), st_init_pin(text) from public, anon, authenticated;
 grant execute on function st_check_pin(text), st_start(text), st_stop(text),
   st_save_entry(text, uuid, timestamptz, timestamptz), st_delete_entry(text, uuid),
-  st_update_settings(text, int, text) to anon, authenticated;
+  st_update_settings(text, int, text),
+  st_add_cut(text, date, int, text), st_delete_cut(text, uuid) to anon, authenticated;
 
 -- ─────────────────────────────────────────────────────────────
 -- Live-Aktualisierung auf allen Geräten
@@ -198,6 +240,9 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table st_settings;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table st_cuts;
 exception when duplicate_object then null; end $$;
 
 -- ─────────────────────────────────────────────────────────────

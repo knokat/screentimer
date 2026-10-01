@@ -49,16 +49,18 @@ export function secondsPerDay(sessions, now) {
 }
 
 // Alle Kennzahlen für die Startseite, in Minuten (mit Nachkommastellen für flüssige Anzeige)
-export function summarize(sessions, now, budgetMin = 420) {
+// cutMin = Summe der Kürzungen dieser Woche; das wirksame Budget sinkt entsprechend (nie unter 0)
+export function summarize(sessions, now, budgetMin = 420, cutMin = 0) {
   const secs = secondsPerDay(sessions, now);
   const days = secs.map((s) => s / 60);
   const ti = dayIndex(now);
   const before = days.slice(0, ti).reduce((a, b) => a + b, 0);
   const today = days[ti];
   const week = before + today;
+  const eff = Math.max(0, budgetMin - cutMin);
   // Wochenrest auf ganze Minuten, damit „noch …“ und „… verbraucht“ zusammen genau das Budget ergeben
-  const rem = budgetMin - Math.floor(week + 1e-6);
-  const frame = Math.max(0, Math.min(HOUR_MIN, budgetMin - before)); // Tagesrahmen
+  const rem = eff - Math.floor(week + 1e-6);
+  const frame = Math.max(0, Math.min(HOUR_MIN, eff - before)); // Tagesrahmen
   const yellow = Math.max(0, frame - today);
   const red = Math.max(0, today - frame);
   const weekOver = Math.max(0, -rem);
@@ -66,7 +68,7 @@ export function summarize(sessions, now, budgetMin = 420) {
   const perDay = daysLeft > 0 ? Math.floor(Math.max(0, rem) / daysLeft) : null;
   const running = sessions.find((s) => !s.ended_at) || null;
   const runningSec = running ? Math.max(0, (new Date(now).getTime() - new Date(running.started_at).getTime()) / 1000) : 0;
-  return { days, ti, before, today, week, rem, frame, yellow, red, weekOver, daysLeft, perDay, running, runningSec, budgetMin };
+  return { days, ti, before, today, week, rem, frame, yellow, red, weekOver, daysLeft, perDay, running, runningSec, budgetMin, cutMin: budgetMin - eff, eff };
 }
 
 // „3 h 20 min“, „45 min“, „2 h“ – abgerundet auf ganze Minuten
@@ -102,12 +104,26 @@ export function restRange(ti) {
   return left > 1 ? DAY_NAMES[ti + 1] + '–So' : 'So';
 }
 
-// Füllgrad der 7 Stundenkästchen (verbraucht, 0–100 %)
-export function hourCells(weekMin, budgetMin = 420) {
-  const n = Math.max(1, Math.round(budgetMin / 60));
+// Stundenkästchen über das volle Budget. Jedes Kästchen hat drei Teile (in % seiner Breite):
+// used = verbraucht, free = noch übrig, cut = gekürzt (liegt immer am Ende der Woche).
+// cap = Minuten des Kästchens (das letzte kann kürzer sein, z. B. bei 7,5 h).
+export function hourCells(weekMin, budgetMin = 420, effMin = budgetMin) {
+  const n = Math.max(1, Math.ceil(budgetMin / 60 - 1e-9));
+  const usedEnd = Math.min(weekMin, effMin);
+  const ov = (a, b, c, d) => Math.max(0, Math.min(b, d) - Math.max(a, c));
   const cells = [];
-  for (let i = 0; i < n; i++) cells.push(Math.max(0, Math.min(60, weekMin - i * 60)) / 60 * 100);
+  for (let i = 0; i < n; i++) {
+    const a = i * 60, b = Math.min(budgetMin, a + 60), cap = b - a;
+    const used = ov(a, b, 0, usedEnd), cut = ov(a, b, effMin, budgetMin);
+    const pct = (m) => (cap ? m / cap * 100 : 0);
+    cells.push({ cap, used: pct(used), cut: pct(cut), free: pct(Math.max(0, cap - used - cut)) });
+  }
   return cells;
+}
+
+export function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return toDateInput(new Date(y, m - 1, d + n));
 }
 
 // SVG-Pfad eines Keils ab 12 Uhr; dir -1 = gegen den Uhrzeigersinn

@@ -20,30 +20,37 @@ Die Tabellen heißen alle `st_…` und berühren die Workout-Tabellen nicht. Wer
 
 ### 3. Geräte
 - **Eltern-Handys:** Link in Safari öffnen, PIN eingeben, dann Teilen → „Zum Home-Bildschirm“.
-- **Leanders iPad:** `https://knokat.github.io/screentimer/?kind` in Safari öffnen, dann Teilen → „Zum Home-Bildschirm“. Das iPad merkt sich die Kinder-Ansicht. Zurück zur Eltern-Ansicht: `?eltern` an den Link hängen.
+- **Leanders iPad:** `https://knokat.github.io/screentimer/kind/` in Safari öffnen, dann Teilen → „Zum Home-Bildschirm“. Das Icon öffnet immer die Kinder-Ansicht.
+  Warum eine eigene Adresse statt `?kind`: iPhone und iPad lassen Parameter beim Speichern auf dem Home-Bildschirm weg, und die Home-Bildschirm-App hat einen eigenen Speicher, getrennt von Safari. Alte `?kind`-Links leiten automatisch auf `kind/` um.
+- **Gut zu wissen:** Auch auf den Eltern-Handys fragt die Home-Bildschirm-App beim ersten Öffnen einmal nach der PIN – aus demselben Grund.
 
 ## Vorher ausprobieren (ohne Einrichtung)
 Mit Beispieldaten aus den Entwürfen, nichts wird gespeichert, PIN `1234`:
 
 | Zustand | Eltern-Handy | iPad |
 | --- | --- | --- |
-| Kein Timer | `?demo=ruhe` | `?demo=ruhe&kind` |
-| Timer läuft | `?demo=laeuft` | `?demo=laeuft&kind` |
-| Über der Stunde | `?demo=stunde` | `?demo=stunde&kind` |
-| Woche fast leer | `?demo=knapp` | `?demo=knapp&kind` |
-| Woche überzogen | `?demo=woche` | `?demo=woche&kind` |
+| Kein Timer | `?demo=ruhe` | `kind/?demo=ruhe` |
+| Timer läuft | `?demo=laeuft` | `kind/?demo=laeuft` |
+| Über der Stunde | `?demo=stunde` | `kind/?demo=stunde` |
+| Woche fast leer | `?demo=knapp` | `kind/?demo=knapp` |
+| Woche überzogen | `?demo=woche` | `kind/?demo=woche` |
+| 30 min gekürzt | `?demo=gekuerzt` | `kind/?demo=gekuerzt` |
+| Gekürzt, Timer läuft | `?demo=gekuerzt_laeuft` | `kind/?demo=gekuerzt_laeuft` |
 
 ## Regeln (Kurzfassung aus dem PRD)
 - Wochenbudget 7 h (in den Einstellungen änderbar), Woche Mo 00:00 – So 24:00, kein Übertrag.
 - **Groß:** Wochenrest + „gleich verteilt pro Tag“ (Rest ÷ Tage nach heute bis Sonntag).
 - **Tagesuhr:** 60 min als Richtwert, kein Limit. Gelb = heute noch übrig, gedeckelt auf den Wochenrest zu Tagesbeginn. Darüber wächst ein roter Keil entlang der Skala 10, 20, 30.
 - **Wochenstreifen:** 7 Kästchen à 1 Stunde, Überzug als rotes „+12“.
+- **Kürzen:** Einträge → „− Kürzen“. Minuten für diese oder nächste Woche, optional mit Grund. Das wirksame Budget sinkt (Wochenrest, Gleichverteilung, Tagesuhr). Leander sieht „30 min gekürzt · Grund“ und gestreifte Kästchen am Ende des Wochenstreifens. Antippen in der Liste nimmt eine Kürzung zurück.
 - Läuft der Timer, wird die Ansicht schwarz. Nach 2 Stunden erscheint ein Hinweis „vergessen?“.
 - Die Laufzeit wird immer aus der gespeicherten Startzeit berechnet – alle Geräte zeigen dieselbe Zahl.
 
 ## Dateien
 ```
-index.html            Gerüst + Styles
+index.html            Eltern-Ansicht (Einstieg)
+kind/                 Leanders Ansicht: eigene Adresse + eigenes Manifest
+app.css               Styles für beide
 js/app.js             Screens (Eltern, Leander, Einträge, Nachtragen, Einstellungen, PIN)
 js/logic.js           Rechenlogik (Woche, Tagesuhr, Gleichverteilung)
 js/db.js              Supabase-Anbindung + Demo-Modus
@@ -53,7 +60,7 @@ setup.sql             Datenbank-Setup
 tests/logic.test.js   Tests der Rechenlogik
 ```
 
-Tests ausführen: `TZ=Europe/Vienna node --test tests/logic.test.js`
+Tests ausführen: `npm test`
 
 ## Sicherheit, ehrlich gesagt
 - Die PIN ist ein Familien-Schutz, keine Hochsicherheit. Jede falsche Eingabe wird um 1 Sekunde gebremst.
@@ -61,4 +68,5 @@ Tests ausführen: `TZ=Europe/Vienna node --test tests/logic.test.js`
 - Schreiben geht ausschließlich über die PIN-geprüften Datenbank-Funktionen.
 
 ## Nach Änderungen
-Die App holt Updates automatisch. Hängt ein Gerät doch mal: Einstellungen → „App aktualisieren“.
+- **Neue Version mit Datenbank-Änderung** (z. B. Kürzen): `setup.sql` einfach nochmal komplett ausführen. Einträge, Einstellungen und PIN bleiben erhalten, die PIN-Zeile am Ende tut dann nichts.
+- Die App holt Updates automatisch. Hängt ein Gerät doch mal: Einstellungen → „App aktualisieren“.
